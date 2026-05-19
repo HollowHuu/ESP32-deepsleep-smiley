@@ -1,6 +1,6 @@
 #include <Arduino.h>
 
-/*  
+/*
   Rui Santos & Sara Santos - Random Nerd Tutorials
   https://RandomNerdTutorials.com/learn-esp32-with-arduino-ide/
   Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files.
@@ -18,7 +18,7 @@
 #define GREEN_LED 18
 #define YELLOW_LED 19
 #define RED_LED 21
-#define BLUE_LED 3
+#define BLUE_LED 5
 
 // Define bitmask for multiple GPIOs
 uint64_t bitmask = BUTTON_PIN_BITMASK(WAKEUP_GPIO_14) | BUTTON_PIN_BITMASK(WAKEUP_GPIO_27) | BUTTON_PIN_BITMASK(WAKEUP_GPIO_26) | BUTTON_PIN_BITMASK(WAKEUP_GPIO_25);
@@ -40,12 +40,12 @@ void print_GPIO_wake_up(){
 void print_wakeup_reason() {
   esp_sleep_wakeup_cause_t wakeup_reason;
 
-  
+
 
   wakeup_reason = esp_sleep_get_wakeup_cause();
 
   switch (wakeup_reason) {
-    case ESP_SLEEP_WAKEUP_EXT0:     
+    case ESP_SLEEP_WAKEUP_EXT0:
       Serial.println("Wakeup caused by external signal using RTC_IO");
       break;
     case ESP_SLEEP_WAKEUP_EXT1:
@@ -87,7 +87,7 @@ void setup() {
 
   //Print the wakeup reason for ESP32
   print_wakeup_reason();
-  
+
 
   //Use ext1 as a wake-up source
   // esp_sleep_enable_ext1_wakeup_io(bitmask, ESP_EXT1_WAKEUP_ANY_HIGH);
