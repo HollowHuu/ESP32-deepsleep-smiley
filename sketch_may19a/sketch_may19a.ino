@@ -1,24 +1,10 @@
-/*
-  Smiley Feedback Console (ESP32) - smiley-board only
-  ---------------------------------------------------
-  H4 - IoT og embeddede systemer, del 2
-  Denne version indeholder kun selve smiley-anordningen:
-    - 4 knapper med 4 tilhoerende LED
-    - Software-debounce paa knapper
-    - 7 sekunders laasetid efter tryk, LED for den trykkede knap
-      lyser i hele perioden
-    - DeepSleep mellem tryk; vaagner via EXT1 (knaptryk paa RTC GPIO)
-
-  WiFi, NTP og MQTT er bevidst udeladt og tilfoejes senere.
-*/
-
 #include <Arduino.h>
 #include "driver/rtc_io.h"
 #include "esp_sleep.h"
+#include <WiFi.h>
+#include <PubSubClient.h>
 
-// ---------------------------------------------------------------------------
-// Pin-konfiguration
-// ---------------------------------------------------------------------------
+
 #define BUTTON_GREEN   GPIO_NUM_14   // Smiley :)  - meget tilfreds
 #define BUTTON_YELLOW  GPIO_NUM_27   // Smiley :|  - neutral
 #define BUTTON_RED     GPIO_NUM_26   // Smiley :(  - utilfreds
@@ -36,16 +22,11 @@ const uint64_t WAKEUP_BITMASK =
     BUTTON_PIN_BITMASK(BUTTON_RED)    |
     BUTTON_PIN_BITMASK(BUTTON_BLUE);
 
-// ---------------------------------------------------------------------------
-// Adfaerds-parametre
-// ---------------------------------------------------------------------------
 static const uint32_t LOCK_MS              = 7000;   // 7 sek. laasetid + LED on
 static const uint32_t DEBOUNCE_MS          = 40;     // Software debounce
 static const uint32_t IDLE_BEFORE_SLEEP_MS = 8000;   // Vent paa nyt tryk
 
-// ---------------------------------------------------------------------------
-// Persistente RTC-variable (overlever deep sleep)
-// ---------------------------------------------------------------------------
+
 RTC_DATA_ATTR int bootCount  = 0;
 RTC_DATA_ATTR int pressCount = 0;
 
@@ -62,9 +43,30 @@ const Button BUTTONS[4] = {
   { BUTTON_BLUE,   LED_BLUE,   "angry"   },
 };
 
-// ---------------------------------------------------------------------------
-// Hjaelpefunktioner
-// ---------------------------------------------------------------------------
+// Globals
+String WIFI_CONNECTION_SSID = "IoT_H3/4";
+String WIFI_CONNECTION_PASSWORD = "98806829";
+bool WIFI_IS_CONNECTED = false;
+const char *TIME_SERVER = "pool.ntp.org";
+const long gmtOffset_sec = 0;     // We just assume UTC
+const int daylightOffset_sec = 0;
+
+String MQTT_SERVER = "wilsons.local";
+String CLIENT_ID = "device04";
+String CLIENT_PASS = "8HYcRWdQ";
+String TOPIC_NAME = "devices/device04/report";
+
+unsigned long lastMQTTPublish = 0;
+const unsigned long mqttPublishInterval = 60000;  // every minute
+String mqttData = "[]";
+bool dataFetched = false;
+int MQTT_RECONNECT = 0;
+
+WiFiClient espClient;
+PubSubClient mqttClient(espClient);
+
+bool FIRST_SETUP = true;
+
 void allLedsOff() {
   digitalWrite(LED_GREEN,  LOW);
   digitalWrite(LED_YELLOW, LOW);
@@ -110,6 +112,14 @@ int pollButtonsWithDebounce(uint32_t timeoutMs) {
   return -1;
 }
 
+void printTime() {
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) {
+    return;
+  }
+  Serial.println(&timeinfo, "%A, %B, %d %Y %H:%M:%S zone %Z %x");
+}
+
 void handleFeedback(int idx) {
   if (idx < 0 || idx >= 4) return;
   pressCount++;
@@ -118,7 +128,15 @@ void handleFeedback(int idx) {
   allLedsOff();
   digitalWrite(BUTTONS[idx].led, HIGH);
 
-  // Hold LED taendt i 7 sek. laasetid (debounce/lockout)
+
+  if (!mqttClient.connected()) {
+    mqttReconnect();
+  } else {
+    // Always call loop() when connected
+    mqttClient.loop();
+  }
+
+
   uint32_t lockStart = millis();
   while (millis() - lockStart < LOCK_MS) {
     delay(50);
@@ -130,7 +148,6 @@ void enterDeepSleep() {
   Serial.println("Gaar i deep sleep. EXT1 wakeup aktiv.");
   allLedsOff();
 
-  // Knaptryk vaekker enheden (knapper trækker HIGH naar trykket)
   esp_sleep_enable_ext1_wakeup(WAKEUP_BITMASK, ESP_EXT1_WAKEUP_ANY_HIGH);
 
   delay(50);
@@ -149,9 +166,6 @@ void printWakeupReason() {
   }
 }
 
-// ---------------------------------------------------------------------------
-// setup() = HELE programmet. loop() bruges ikke, vi sover i stedet.
-// ---------------------------------------------------------------------------
 void setup() {
   Serial.begin(115200);
   delay(150);
@@ -167,6 +181,20 @@ void setup() {
   pinMode(BUTTON_RED,    INPUT_PULLDOWN);
   pinMode(BUTTON_BLUE,   INPUT_PULLDOWN);
 
+  if (FIRST_SETUP) {
+
+    if (!WIFI_IS_CONNECTED) {
+      WiFi.onEvent(WiFiEvent);
+      wifi_connect();
+    }
+
+    mqttSetup();
+  }
+
+
+
+  printTime();
+
   ++bootCount;
   Serial.printf("\n=== Smiley Feedback Console - boot #%d ===\n", bootCount);
   printWakeupReason();
@@ -178,7 +206,6 @@ void setup() {
   if (reason == ESP_SLEEP_WAKEUP_EXT1) {
     idx = identifyWakeupButton();
   } else {
-    // Koldstart: kort visuel selvtest
     blinkAllLeds(2, 120);
   }
 
@@ -186,7 +213,6 @@ void setup() {
     handleFeedback(idx);
   }
 
-  // 2) Vaer aktiv et stykke tid og lyt efter flere tryk (debounced)
   Serial.printf("Aktiv-periode: lytter efter knaptryk i %lu ms...\n",
                 (unsigned long)IDLE_BEFORE_SLEEP_MS);
   uint32_t idleStart = millis();
@@ -201,10 +227,16 @@ void setup() {
     }
   }
 
-  // 3) Tilbage i deep sleep
   enterDeepSleep();
 }
 
 void loop() {
-  // Tom: vi anvender deep sleep-arkitektur, alt sker i setup().
+  if (WiFi.status() == WL_CONNECTED) {
+    if (!mqttClient.connected()) {
+      mqttReconnect();
+    } else {
+      // Always call loop() when connected
+      mqttClient.loop();
+    }
+  }
 }
