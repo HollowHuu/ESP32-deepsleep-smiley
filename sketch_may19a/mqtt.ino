@@ -39,7 +39,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 }
 
 void mqttSetup() {
-  mqttClient.setServer(MQTT_SERVER.c_str(), 1883);
+  mqttClient.setServer(MQTT_SERVER.c_str(), MQTT_PORT);
   mqttClient.setCallback(mqttCallback);
   mqttClient.setBufferSize(50000); // This is insanely large
 }
