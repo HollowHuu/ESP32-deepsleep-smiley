@@ -54,7 +54,7 @@ const int daylightOffset_sec = 0;
 String MQTT_SERVER = "wilsons.local";
 String CLIENT_ID = "device04";
 String CLIENT_PASS = "8HYcRWdQ";
-String TOPIC_NAME = "devices/device04/report";
+String TOPIC_NAME = "/devices/device04/report";
 
 unsigned long lastMQTTPublish = 0;
 const unsigned long mqttPublishInterval = 60000;  // every minute
@@ -131,9 +131,10 @@ void handleFeedback(int idx) {
 
   if (!mqttClient.connected()) {
     mqttReconnect();
+    publishData(BUTTONS[idx].label);
   } else {
-    // Always call loop() when connected
-    mqttClient.loop();
+    Serial.println("Publishing Data");
+    publishData(BUTTONS[idx].label);
   }
 
 
@@ -189,6 +190,7 @@ void setup() {
     }
 
     mqttSetup();
+    FIRST_SETUP = false;
   }
 
 

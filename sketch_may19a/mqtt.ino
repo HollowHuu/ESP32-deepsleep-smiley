@@ -5,8 +5,12 @@ void mqttReconnect() {
     Serial.print("Attempting MQTT connection...");
     
     if (mqttClient.connect(CLIENT_ID.c_str(), CLIENT_ID.c_str(), CLIENT_PASS.c_str())) {
-      Serial.println("connected!");
-      mqttClient.publish("devices/device04/status", "ESP32 connected");
+      Serial.println("connected to MQTT server!");
+      if (mqttClient.publish("/devices/device04/status", "ESP32 connected")) {
+        Serial.println("Published status");
+      } else {
+        Serial.println("Error publishing status");
+      }
       mqttClient.subscribe(TOPIC_NAME.c_str());
       
       MQTT_RECONNECT = 0;
@@ -40,30 +44,27 @@ void mqttSetup() {
   mqttClient.setBufferSize(50000); // This is insanely large
 }
 
-void publishData() {
+void publishData(String response) {
   unsigned long now = millis();
-  if (now - lastMQTTPublish > mqttPublishInterval) {
-    lastMQTTPublish = now;
-    
-    time_t current_time;
-    time(&current_time);
-    unsigned long long epochMillis = (unsigned long long)current_time * 1000ULL;
-    
-    if (mqttClient.connected()) {
+  
+  time_t current_time;
+  time(&current_time);
+  unsigned long long epochMillis = (unsigned long long)current_time * 1000ULL;
+  
+  if (mqttClient.connected()) {
 
-      char payload[128];
-      snprintf(payload, sizeof(payload),
-              "{\"temperature\": %.2f, \"timestamp\": %llu}",
-              0.0, epochMillis);
-      
-      if (mqttClient.publish(TOPIC_NAME.c_str(), payload)) {
-        Serial.print("Published to MQTT: ");
-        Serial.println(payload);
-      } else {
-        Serial.println("Failed to publish - adding to cache");
-      }
+    char payload[128];
+    snprintf(payload, sizeof(payload),
+            "{\"happymeter\": \"%s\", \"timestamp\": %llu}",
+            response, epochMillis);
+    
+    if (mqttClient.publish(TOPIC_NAME.c_str(), payload)) {
+      Serial.print("Published to MQTT: ");
+      Serial.println(payload);
     } else {
-      Serial.println("MQTT not connected - caching data");
+      Serial.println("Failed to publish - adding to cache");
     }
+  } else {
+    Serial.println("MQTT not connected - caching data");
   }
 }
